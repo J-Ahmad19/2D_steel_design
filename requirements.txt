@@ -1,0 +1,6 @@
+ezdxf>=1.0
+pandas>=2.0
+openpyxl>=3.0
+gspread>=5.0         # if using Google Sheets
+google-auth>=2.0     # if using Google Sheets API
+python-dotenv>=1.0   # for storing credentials locally (optional)
