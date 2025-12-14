@@ -1,14 +1,5 @@
 # src/dxf_generator.py
-"""
-FINAL PRECISION VERSION: Parametric DXF Generator for Steel Bridge.
-Focus: Precise dimensions, schematic I-girders, exact layout matching sample.
 
-Layout:
-- Top Left: Transverse Section (Schematic Girders, Leader Depth, Overhangs)
-- Top Right: Pier Elevation
-- Bottom Left: Bridge Plan (Stacked Dimensions)
-- Bottom Right: Title Block
-"""
 from pathlib import Path
 from typing import Dict, Tuple
 import ezdxf
