@@ -1,85 +1,54 @@
-# src/main.py
 import sys
+import logging
 from pathlib import Path
 from reader import read_excel
-# Assuming dxf_generator.py is updated as per the previous response
-from dxf_generator import create_bridge_dxf, DEFAULTS 
+from dxf_generator import create_bridge_dxf, DEFAULTS
 from utils import sanitize_filename
-import pandas as pd
-import logging
+
+# Setup Paths
+BASE_DIR = Path(__file__).parent.parent
+INPUT_FILE = BASE_DIR / "input" / "dxf-input-values.xlsx"
+OUTPUT_DIR = BASE_DIR / "output"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-# Ensure paths are correct relative to the `src/` directory
-INPUT = Path("../input/dxf-input-values.xlsx")
-OUTPUT_DIR = Path("../output")
-
-def sanitize_row_params(row: pd.Series) -> dict:
-    d = row.to_dict()
+def process_data():
+    logging.info(f"Reading input from: {INPUT_FILE}")
     
-    # 1. Ensure drawing_number present
-    if not d.get("drawing_number"):
-        d["drawing_number"] = f"row-{int(row.name)+1}"
-        
-    # 2. Coerce numeric types and apply defaults for ALL required parameters
-    # The DEFAULTS dictionary from dxf_generator.py is the source of truth for defaults.
-    REQUIRED_NUMERIC_KEYS = [k for k in DEFAULTS.keys() if k != "drawing_number"]
-    
-    for key in REQUIRED_NUMERIC_KEYS:
-        # Check for NaN, None, or empty string
-        is_nan_or_missing = pd.isna(d.get(key)) or d.get(key) == ""
-        
-        if key in d and not is_nan_or_missing:
-            try:
-                d[key] = float(d[key])
-            except Exception:
-                # If conversion fails, use the defined default
-                d[key] = DEFAULTS[key]
-                logging.warning(f"Coercion failed for key '{key}' in row {row.name+1}. Using default: {d[key]}")
-        elif key not in d or is_nan_or_missing:
-            # If missing or NaN, supply default from dxf_generator
-            d[key] = DEFAULTS[key]
-
-    return d
-
-def run():
-    if not INPUT.exists():
-        logging.error(f"Input file {INPUT} not found. Please ensure it is in the correct location.")
-        # 
-        sys.exit(1)
-        
     try:
-        df = read_excel(str(INPUT))
+        data = read_excel(INPUT_FILE)
     except Exception as e:
-        logging.error(f"Failed to read and process Excel file {INPUT}: {e}")
-        sys.exit(1)
-        
-    if df.empty:
-        logging.warning("No valid data rows found in the input spreadsheet. Exiting.")
-        sys.exit(0)
-        
-    logging.info(f"Read {len(df)} valid data row(s) from {INPUT}")
+        logging.error(f"Error reading Excel: {e}")
+        return
+
+    if not data:
+        logging.warning("No data found in Excel file.")
+        return
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
-    failures = 0
-    for idx, row in df.iterrows():
-        params = sanitize_row_params(row)
-        filename_safe = sanitize_filename(params.get("drawing_number"))
-        out_path = OUTPUT_DIR / f"{filename_safe}.dxf"
+    count = 0
+    for row in data:
+        # Merge row data with defaults to ensure no missing keys
+        params = DEFAULTS.copy()
+        # Clean None/NaN values from row
+        clean_row = {k: v for k, v in row.items() if pd.notna(v) and v != ""}
+        params.update(clean_row)
+        
+        # Determine filename
+        dwg_num = str(params.get("drawing_number", f"output_{count}"))
+        safe_name = sanitize_filename(dwg_num)
+        out_path = OUTPUT_DIR / f"{safe_name}.dxf"
         
         try:
-            logging.info(f"Generating {out_path} ...")
-            # The create_bridge_dxf function now expects the parameters in the cleaned dictionary format
             create_bridge_dxf(params, str(out_path))
-            
+            logging.info(f"Generated: {out_path.name}")
+            count += 1
         except Exception as e:
-            logging.exception(f"Failed to generate {out_path} for row {idx+1} ({params.get('drawing_number')}): {e}")
-            failures += 1
-            
-    if failures:
-        logging.info(f"Completed with {failures} failure(s). Check the logs for details.")
-    else:
-        logging.info("All DXF files generated successfully.")
+            logging.error(f"Failed to generate {dwg_num}: {e}")
+
+    logging.info(f"Done. Generated {count} files in {OUTPUT_DIR}")
 
 if __name__ == "__main__":
-    run()
+    import pandas as pd # Import here to ensure dependency check
+    process_data()
