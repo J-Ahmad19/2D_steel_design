@@ -15,7 +15,7 @@ TITLEBLOCK_W = 160.0
 TITLEBLOCK_H = 40.0
 
 # Text Sizes
-TEXT_H_DIM = 0.6       # Dimension text
+TEXT_H_DIM = 1.5       # Dimension text
 TEXT_H_TITLE = 3.5     # View titles (e.g. "SECTION AT MIDSPAN")
 TEXT_H_BIG = 10.0      # Drawing Number
 
@@ -133,7 +133,7 @@ def _draw_rect(msp, x, y, w, h, layer=L_BORDER):
     pts = [(x, y), (x+w, y), (x+w, y+h), (x, y+h), (x, y)]
     msp.add_lwpolyline(pts, dxfattribs={"layer": layer, "closed": True})
 
-def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0):
+def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0,override=False):
     x1, y1 = p1
     x2, y2 = p2
 
@@ -199,6 +199,9 @@ def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0
             mid_y = (y1 + y2) / 2
             text_x_shift = (2 * ARROW_SIZE) * gap_direction
 
+            if text_rotation == 0:
+                text_x_shift += (0.5 * TEXT_H_DIM + 4* ARROW_SIZE) * gap_direction
+
             t = msp.add_text(
                 str(text_val),
                 dxfattribs={
@@ -210,7 +213,7 @@ def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0
 
             t.dxf.halign = 1      # Center (same as horizontal)
             t.dxf.valign = 2      # Middle (same as horizontal)
-            t.dxf.rotation=90     # Middle (same as horizontal)
+            t.dxf.rotation = text_rotation     # Middle (same as horizontal)
 
             pos = (dx + text_x_shift, mid_y)
 
@@ -405,7 +408,8 @@ def _render_section(msp, box, params):
         (left, bot),
         "Depth of Girder",
         offset=-5,  # try 8 or 10; flip sign if it appears inside
-        vertical=True
+        vertical=True,
+        text_rotation=90
     )
 
 
@@ -469,8 +473,8 @@ def _render_pier(msp, box, params):
     msp.add_lwpolyline(pts, dxfattribs={"layer": L_OBJECT, "closed": True})
     
     # 7. Dimensions (Offsets are small enough now due to the safe scale calculation)
-    _add_dim(msp, (cx, top), (cx, bot_mid), "Depth of Pier Cap at Centre", offset=5, vertical=True)
-    _add_dim(msp, (left, top), (left, bot_end), "Depth of Pier Cap at End", offset=-5, vertical=True)
+    _add_dim(msp, (cx, top), (cx, bot_mid), "  Depth of Pier Cap at Centre", offset=5, vertical=True,text_rotation=0)
+    _add_dim(msp, (left, top), (left, bot_end), "Depth of Pier Cap at End", offset=-5, vertical=True,text_rotation=90)
     
     
     
@@ -547,9 +551,9 @@ def _render_plan(msp, box, params):
     # Dimensions - MODIFIED: Calculate offsets in scaled units (mm)
     
     # dim_offset_outer was 12.0
-    dim_offset_outer_scaled = 10.0
+    dim_offset_outer_scaled = 25
     # dim_offset_inner was 5.0
-    dim_offset_inner_scaled = 25.0 
+    dim_offset_inner_scaled = 10 
 
     # Width of Pier Cap (Top, outer)
     # We must ensure the offset for the dimension is small enough, which is guaranteed 
@@ -557,10 +561,10 @@ def _render_plan(msp, box, params):
     
     # Use the outside edge of the drawing: left-pc_offset
     _add_dim(msp, (left-5, top), (pc_l_end, top), 
-             "Width of Pier Cap", offset=dim_offset_outer_scaled, text_rotation=90)
+             "Width of Pier Cap", offset=dim_offset_outer_scaled)
     
     _add_dim(msp, (pc_r_start, top), (right+5, top), 
-             "Width of Pier Cap", offset=dim_offset_outer_scaled, text_rotation=90)
+             "Width of Pier Cap", offset=dim_offset_outer_scaled)
     
     # Length of Bridge (Top, inner)
     # The dimension is shown between the inner edges of the pier caps (pc_l_end-pc_offset, pc_r_start+pc_offset)
