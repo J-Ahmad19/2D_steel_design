@@ -1,363 +1,607 @@
-# src/dxf_generator.py
-
-from pathlib import Path
-from typing import Dict, Tuple
 import ezdxf
+from pathlib import Path
+from typing import Dict
 
 # ---------- CONFIGURATION (A3 LANDSCAPE MM) ----------
 A3_W = 420.0
 A3_H = 297.0
-MARGIN = 15.0 
-VIEW_PADDING = 30.0 
-TITLEBLOCK_W = 160.0
+
+MARGIN_LEFT = 30.0
+MARGIN_RIGHT = 30.0
+MARGIN_TOP = 15.0
+MARGIN_BOTTOM = 15.0
+
+TITLEBLOCK_W = 160.0 
 TITLEBLOCK_H = 40.0
 
-# Layer Definitions
-LAYER_BORDER = "BORDER"
-LAYER_GRAPH = "GRAPHIC"
-LAYER_TEXT = "TEXT"
-LAYER_DIM = "DIM"
-LAYER_HIDDEN = "HIDDEN"
-LAYER_CENTER = "CENTER"
+# Text Sizes
+TEXT_H_DIM = 0.6       # Dimension text
+TEXT_H_TITLE = 3.5     # View titles (e.g. "SECTION AT MIDSPAN")
+TEXT_H_BIG = 10.0      # Drawing Number
 
-# Colors (White/Black)
-COL_MAIN = 7 
-TEXT_HEIGHT = 2.5
-ARROW_SIZE = 3.0
-DIM_OFFSET = 10.0 
+# Dimensioning
+DIM_OFFSET = 12.0      # Distance from object
+TICK_SIZE = 2.0        # Size of the bold tick
+TICK_WIDTH = 0.7       # Thickness of tick line
+
+# Layers
+L_BORDER = "BORDER"
+L_OBJECT = "OBJECT"
+L_DIM    = "DIMENSIONS"
+L_TEXT   = "TEXT"
+L_BRACING = "BRACING"
+
+# Colors (ACI)
+C_WHITE = 7
 
 DEFAULTS = {
     "length_m": 20.0,
-    "carriage_width_m": 9.5,
-    "depth_mm": 1200.0,
+    "carriage_width_m": 12.0,
+    "depth_mm": 1500.0,
     "num_girders": 3,
     "pier_cap_length_m": 10.5,
-    "pier_cap_width_m": 0.9,
-    "pier_cap_depth_center_m": 1.2,
+    "pier_cap_width_m": 1.2,
+    "pier_cap_depth_center_m": 1.5,
     "pier_cap_depth_end_m": 0.6,
+    "drawing_number": "2025-06-11-R1-AB-01"
 }
 
-# ---------- UTILS ----------
-def _to_float(v, default=0.0):
-    try: return float(v)
-    except: return float(default)
+def _to_mm(val_m):
+    try: return float(val_m) * 1000.0
+    except: return 0.0
 
-def _to_int(v, default=1):
-    try: return int(float(v))
-    except: return int(default)
-
-def _mm(m: float) -> float:
-    return m * 1000.0
-
-# ---------- DXF SETUP ----------
-def _new_doc():
-    doc = ezdxf.new(dxfversion="R2010")
-    doc.header["$INSUNITS"] = 6
-    doc.header["$LTSCALE"] = 20.0 
+def _setup_doc():
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 4 # Millimeters
     
-    if "DASHED" not in doc.linetypes:
-        doc.linetypes.new("DASHED", dxfattribs={"description": "Dashed", "pattern": [2.0, -2.0]})
-    if "CENTER" not in doc.linetypes:
-        doc.linetypes.new("CENTER", dxfattribs={"description": "Center", "pattern": [3.0, -1.0, 0.5, -1.0]})
+    # Layers
+    doc.layers.new(L_BORDER, dxfattribs={"color": C_WHITE, "lineweight": 60})
+    doc.layers.new(L_OBJECT, dxfattribs={"color": C_WHITE, "lineweight": 45})
+    doc.layers.new(L_BRACING, dxfattribs={"color": C_WHITE, "lineweight": 30})
+    doc.layers.new(L_DIM,    dxfattribs={"color": C_WHITE, "lineweight": 25})
+    doc.layers.new(L_TEXT,   dxfattribs={"color": C_WHITE, "lineweight": 25})
 
-    for name in [LAYER_BORDER, LAYER_GRAPH, LAYER_TEXT, LAYER_DIM]:
-        doc.layers.new(name, dxfattribs={"color": COL_MAIN})
-    doc.layers.new(LAYER_HIDDEN, dxfattribs={"color": COL_MAIN, "linetype": "DASHED"})
-    doc.layers.new(LAYER_CENTER, dxfattribs={"color": COL_MAIN, "linetype": "CENTER"})
-    
     if "ROMANS" not in doc.styles:
-         doc.styles.new("ROMANS", dxfattribs={"font": "romans.shx", "flags": 0})
+        doc.styles.new("ROMANS", dxfattribs={"font": "romans.shx", "width": 0.8})
     return doc
 
-def _layout_boxes(px1, py1, px2, py2):
-    split_y = py1 + (py2 - py1) * 0.50 
-    split_x = px1 + (px2 - px1) * 0.5 
-    
-    box_sec = (px1, split_y, split_x, py2)
-    box_pier = (split_x, split_y, px2, py2)
-    plan_max_x = px2 - TITLEBLOCK_W - 10.0
-    box_plan = (px1, py1, plan_max_x, split_y)
-    
-    return box_sec, box_pier, box_plan
+import math # Needed for trigonometric functions for rotation
 
-# ---------- PRIMITIVES ----------
-def _arrow(msp, x, y, dir='right', size=ARROW_SIZE):
-    s = size
-    if dir=='left': pts=[(x+s,y+s*0.3),(x,y),(x+s,y-s*0.3)]
-    elif dir=='right': pts=[(x-s,y+s*0.3),(x,y),(x-s,y-s*0.3)]
-    elif dir=='up': pts=[(x-s*0.3,y-s),(x,y),(x+s*0.3,y-s)]
-    else: pts=[(x-s*0.3,y+s),(x,y),(x+s*0.3,y+s)]
-    msp.add_lwpolyline(pts, dxfattribs={"layer":LAYER_DIM, "closed":True})
+# --- DEFINITIONS TO BE PLACED NEAR THE START OF YOUR SCRIPT ---
+# Assuming L_OBJECT or a similar layer is used for the arrow fill.
+L_TERMINATOR = "DIM_ARROW" 
 
-def _dim_linear(msp, p1, p2, offset=DIM_OFFSET, text="", text_h=TEXT_HEIGHT, vertical=False):
+def _calc_arrow_size(p1, p2, base=3.0):
+    """
+    Arrow size depends on dimension length.
+    Engineering rule: minimum length = 6 × arrow size
+    """
+    dim_len = math.dist(p1, p2)
+    return min(base, dim_len / 6.0)
+
+
+def _draw_arrow(msp, center_point, size, angle_deg):
+    """
+    Draws a filled triangular arrowhead at the center_point.
+    
+    Args:
+        msp: Model Space object (drawing canvas).
+        center_point (tuple): (x, y) location of the arrow tip.
+        size (float): Length of the arrowhead along the dimension line.
+        angle_deg (float): Angle of the dimension line (0, 90, 180, 270).
+    """
+    cx, cy = center_point
+    
+    # Define the arrow geometry (a symmetric triangle relative to the tip (0, 0))
+    # Standard arrowhead height is about 3 times the width.
+    h = size  # Height of arrow (along dim line)
+    w = h / 3.0 # Base width of arrow
+    
+    # Points in arrow-local coordinates, assuming the tip is at (h/2, 0)
+    # The tip must be at the dimension line endpoint (cx, cy), so we define 
+    # the points relative to that tip and then rotate/translate.
+    
+    # Pts: Tip, Base Left, Base Right, Tip (closed)
+    local_points = [
+        (0.0, 0.0),        # Tip (Reference Point)
+        (-h, w / 2.0),     # Base Left
+        (-h, -w / 2.0)     # Base Right
+    ]
+    
+    # Convert angle to radians
+    angle_rad = math.radians(angle_deg)
+    
+    # Rotation and Translation
+    rotated_points = []
+    for px, py in local_points:
+        # 1. Rotate the point
+        new_x = px * math.cos(angle_rad) - py * math.sin(angle_rad)
+        new_y = px * math.sin(angle_rad) + py * math.cos(angle_rad)
+        # 2. Translate the point to the center_point
+        rotated_points.append((new_x + cx, new_y + cy))
+        
+    # Draw the filled arrow (closed polyline)
+    # Using 'L_OBJECT' or a dedicated layer for fill.
+    msp.add_lwpolyline(rotated_points, dxfattribs={"layer": L_TERMINATOR, "closed": True, "flags": 1})
+    # NOTE: 'flags: 1' might be needed for specific libraries to force closing the polyline.
+    
+# --- END OF HELPER FUNCTION ---
+
+# ---------- UTILS ----------
+
+def _draw_rect(msp, x, y, w, h, layer=L_BORDER):
+    pts = [(x, y), (x+w, y), (x+w, y+h), (x, y+h), (x, y)]
+    msp.add_lwpolyline(pts, dxfattribs={"layer": layer, "closed": True})
+
+def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0):
     x1, y1 = p1
     x2, y2 = p2
-    
+
+    # ------------------ ADDED ------------------
+    ARROW_SIZE = _calc_arrow_size(p1, p2, base=3.0)  # <<< ADDED
+    # -------------------------------------------
+
+    EXT_LINE_OVERRUN = 1.5 * ARROW_SIZE
+    EXT_LINE_GAP = 0.5 * ARROW_SIZE
+
     if vertical:
         dx = x1 + offset
-        msp.add_line((x1,y1), (dx,y1), dxfattribs={"layer":LAYER_DIM})
-        msp.add_line((x2,y2), (dx,y2), dxfattribs={"layer":LAYER_DIM})
-        msp.add_line((dx,y1), (dx,y2), dxfattribs={"layer":LAYER_DIM})
-        _arrow(msp, dx, y1, 'up')
-        _arrow(msp, dx, y2, 'down')
-        if text:
-            t_offset = 2.0 if offset > 0 else -2.0
-            t = msp.add_text(text, dxfattribs={"height":text_h, "layer":LAYER_TEXT, "style":"ROMANS", "rotation":90})
-            t.dxf.insert = (dx + t_offset, (y1+y2)/2)
-            t.dxf.halign = 1 
-            t.dxf.valign = 1
+        gap_direction = 1 if dx > x1 else -1
+
+        # Extension lines
+        msp.add_line((x1 + gap_direction * EXT_LINE_GAP, y1), (dx, y1),
+                     dxfattribs={"layer": L_DIM})
+        msp.add_line((x2 + gap_direction * EXT_LINE_GAP, y2), (dx, y2),
+                     dxfattribs={"layer": L_DIM})
+
+        # Dimension line
+        msp.add_line((dx, y1), (dx, y2), dxfattribs={"layer": L_DIM})
+
+        # ------------------ ADDED ------------------
+        dim_len = abs(y2 - y1)
+        arrows_inside = dim_len >= 6 * ARROW_SIZE
+        # -------------------------------------------
+
+        # Arrow at P1
+        if y1 > y2:
+            _draw_arrow(
+                msp,
+                (dx, y1 if arrows_inside else y1 + ARROW_SIZE),
+                ARROW_SIZE,
+                90 if arrows_inside else 270
+            )
+        else:
+            _draw_arrow(
+                msp,
+                (dx, y1 if arrows_inside else y1 - ARROW_SIZE),
+                ARROW_SIZE,
+                270 if arrows_inside else 90
+            )
+
+        # Arrow at P2
+        if y2 > y1:
+            _draw_arrow(
+                msp,
+                (dx, y2 if arrows_inside else y2 + ARROW_SIZE),
+                ARROW_SIZE,
+                90 if arrows_inside else 270
+            )
+        else:
+            _draw_arrow(
+                msp,
+                (dx, y2 if arrows_inside else y2 - ARROW_SIZE),
+                ARROW_SIZE,
+                270 if arrows_inside else 90
+            )
+
+          # ---------- FIXED TEXT (NOW SAME LOGIC AS HORIZONTAL) ----------
+        if text_val:
+            mid_y = (y1 + y2) / 2
+            text_x_shift = (2 * ARROW_SIZE) * gap_direction
+
+            t = msp.add_text(
+                str(text_val),
+                dxfattribs={
+                    "height": TEXT_H_DIM,
+                    "layer": L_TEXT,
+                    "style": "ROMANS"
+                }
+            )
+
+            t.dxf.halign = 1      # Center (same as horizontal)
+            t.dxf.valign = 2      # Middle (same as horizontal)
+            t.dxf.rotation=90     # Middle (same as horizontal)
+
+            pos = (dx + text_x_shift, mid_y)
+
+            t.dxf.insert = pos
+            t.dxf.align_point = pos   # <-- KEY: same point like horizontal
+
     else:
         dy = y1 + offset
-        msp.add_line((x1,y1), (x1,dy), dxfattribs={"layer":LAYER_DIM})
-        msp.add_line((x2,y2), (x2,dy), dxfattribs={"layer":LAYER_DIM})
-        msp.add_line((x1,dy), (x2,dy), dxfattribs={"layer":LAYER_DIM})
-        _arrow(msp, x1, dy, 'right')
-        _arrow(msp, x2, dy, 'left')
-        if text:
-            t_offset = 1.0 if offset > 0 else -1.0
-            t = msp.add_text(text, dxfattribs={"height":text_h, "layer":LAYER_TEXT, "style":"ROMANS"})
-            t.dxf.insert = ((x1+x2)/2, dy + t_offset)
-            t.dxf.halign = 1 
-            t.dxf.valign = 1 if offset > 0 else 4
+        gap_direction = 1 if dy > y1 else -1
 
-# ---------- VIEWS ----------
+        # Extension lines
+        msp.add_line((x1, y1 + gap_direction * EXT_LINE_GAP), (x1, dy),
+                     dxfattribs={"layer": L_DIM})
+        msp.add_line((x2, y2 + gap_direction * EXT_LINE_GAP), (x2, dy),
+                     dxfattribs={"layer": L_DIM})
 
-def _draw_section_view(msp, box, params):
-    # Data
-    W_mm = _mm(_to_float(params.get("carriage_width_m"), DEFAULTS["carriage_width_m"]))
-    D_mm = _to_float(params.get("depth_mm"), DEFAULTS["depth_mm"])
-    num_g = max(2, _to_int(params.get("num_girders"), DEFAULTS["num_girders"]))
+        # Dimension line
+        msp.add_line((x1, dy), (x2, dy), dxfattribs={"layer": L_DIM})
+
+        # ------------------ ADDED ------------------
+        dim_len = abs(x2 - x1)
+        arrows_inside = dim_len >= 6 * ARROW_SIZE
+        # -------------------------------------------
+
+        _draw_arrow(
+            msp,
+            (x1 if arrows_inside else x1 - ARROW_SIZE, dy),
+            ARROW_SIZE,
+            180 if arrows_inside else 0
+        )
+        _draw_arrow(
+            msp,
+            (x2 if arrows_inside else x2 + ARROW_SIZE, dy),
+            ARROW_SIZE,
+            0 if arrows_inside else 180
+        )
+        if text_val:
+            mid_x = (x1 + x2) / 2
+            text_y_shift = (2 * ARROW_SIZE) * gap_direction
+
+            t = msp.add_text(
+                str(text_val),
+                dxfattribs={
+                    "height": TEXT_H_DIM,
+                    "layer": L_TEXT,
+                    "style": "ROMANS"
+                }
+            )
+            # Proper DXF justification without set_pos()
+            t.dxf.halign = 1      # Center
+            t.dxf.valign = 2      # Middle
+            t.dxf.rotation = text_rotation
+
+            pos = (mid_x, dy + text_y_shift)
+
+            t.dxf.insert = pos
+            t.dxf.align_point = pos
+
+
+
+# ---------- VIEW RENDERERS ----------
+# --- New Function to Calculate Scale Safely ---
+# This function calculates a single scale factor that safely fits all dimensions (L, W, D) 
+# and their required margins into the given box (bx, by, bw, bh).
+MAX_DRAWING_MARGIN_MM = 15.0
+
+def _calculate_section_scale(box, params):
+    bx, by, bw, bh = box
+
+    W = _to_mm(params["carriage_width_m"])
+    D = params["depth_mm"]
+
+    Wm = W + 2*MAX_DRAWING_MARGIN_MM
+    Dm = D + 2*MAX_DRAWING_MARGIN_MM
+
+    sx = (bw * 0.85) / Wm
+    sy = (bh * 0.70) / Dm
+
+    return min(sx, sy)
+
+def _calculate_pier_scale(box, params):
+    bx, by, bw, bh = box
+
+    LPC = _to_mm(params["pier_cap_length_m"])
+    DPCC = _to_mm(params["pier_cap_depth_center_m"])
+
+    H_core = DPCC + 2000.0    # pier + assumed column part
+
+    Lm = LPC + 2 * MAX_DRAWING_MARGIN_MM
+    Hm = H_core + 2 * MAX_DRAWING_MARGIN_MM
+
+    sx = (bw * 0.80) / Lm     # 80% width
+    sy = (bh * 0.70) / Hm     # 70% height
+    return min(sx, sy)
+
+
+def _calculate_plan_scale(box, params):
+    bx, by, bw, bh = box
+
+    L = _to_mm(params["length_m"])
+    W = _to_mm(params["carriage_width_m"])
+
+    Lm = L + 2 * MAX_DRAWING_MARGIN_MM
+    Wm = W + 2 * MAX_DRAWING_MARGIN_MM
+
+    sx = (bw * 0.9) / Lm     # 85% width
+    sy = (bh * 0.8) / Wm     # 70% height
+    return min(sx, sy)
+
+
+# --- Updated _render_section function ---
+
+def _render_section(msp, box, params):
+    """Top Left: Cross Section"""
     
-    avail_w = (box[2] - box[0]) - VIEW_PADDING
-    avail_h = (box[3] - box[1]) - VIEW_PADDING
+    # Calculate scale using the new safe function (assuming 'box' here is the CS box)
+    scale = _calculate_section_scale(box, params) 
     
-    scale = min(avail_w / W_mm, avail_h / (D_mm * 2.5))
+    bx, by, bw, bh = box
     
-    draw_W = W_mm * scale
-    draw_D = D_mm * scale
-    deck_thk = 200 * scale 
-    overhang = 500 * scale 
+    W = _to_mm(params.get("carriage_width_m"))
+    D = float(params.get("depth_mm"))
+    NG = int(params.get("num_girders"))
     
-    cx = (box[0] + box[2]) / 2
-    cy = (box[1] + box[3]) / 2
-    top = cy + draw_D/2
-    bot = cy - draw_D/2
-    left = cx - draw_W/2
-    right = cx + draw_W/2
+    # Use the calculated scale
+    dw, dd = W * scale, D * scale
+    deck_t = 250 * scale
     
-    # 1. Slab
-    msp.add_lwpolyline([(left,top), (right,top), (right,top-deck_thk), (left,top-deck_thk), (left,top)], 
-                       dxfattribs={"layer":LAYER_GRAPH, "closed":True})
+    cx, cy = bx + bw/2, by + bh/2
+    left, right = cx - dw/2, cx + dw/2
+    top, bot = cy + dd/2, cy - dd/2
     
-    # 2. Girders
-    girder_span_width = draw_W - (2 * overhang)
-    g_spacing = girder_span_width / (num_g - 1)
+    # 1. Deck (NO CHANGE)
+    msp.add_lwpolyline([(left, top), (right, top), (right, top-deck_t), (left, top-deck_t)], 
+                       dxfattribs={"layer": L_OBJECT, "closed": True})
     
-    flange_w = 300 * scale
-    flange_t = 25 * scale
+    # 2. Girders & Bracing (NO CHANGE)
+    overhang = 500 * scale
+    g_span = dw - 2*overhang
+    spacing = g_span / (NG - 1)
     
-    g_centers = []
+    g_x = []
+    g_width = 300 * scale
     
-    for i in range(num_g):
-        gx = (left + overhang) + i * g_spacing
-        g_centers.append(gx)
+    for i in range(NG):
+        gx = (left + overhang) + i*spacing
+        g_x.append(gx)
+        # Top Flange
+        msp.add_line((gx-g_width/2, top-deck_t), (gx+g_width/2, top-deck_t), dxfattribs={"layer": L_OBJECT})
+        # Web
+        msp.add_line((gx, top-deck_t), (gx, bot), dxfattribs={"layer": L_OBJECT})
+        # Bottom Flange
+        msp.add_line((gx-g_width/2, bot), (gx+g_width/2, bot), dxfattribs={"layer": L_OBJECT})
         
-        # Schematic I-Girder
-        msp.add_lwpolyline([(gx-flange_w/2, top-deck_thk), (gx+flange_w/2, top-deck_thk), 
-                            (gx+flange_w/2, top-deck_thk-flange_t), (gx-flange_w/2, top-deck_thk-flange_t), 
-                            (gx-flange_w/2, top-deck_thk)], dxfattribs={"layer":LAYER_GRAPH, "closed":True})
-        msp.add_lwpolyline([(gx-flange_w/2, bot), (gx+flange_w/2, bot), 
-                            (gx+flange_w/2, bot+flange_t), (gx-flange_w/2, bot+flange_t), 
-                            (gx-flange_w/2, bot)], dxfattribs={"layer":LAYER_GRAPH, "closed":True})
-        msp.add_lwpolyline([(gx, top-deck_thk-flange_t), (gx, bot+flange_t)], 
-                           dxfattribs={"layer":LAYER_GRAPH, "const_width": 2.0 * scale})
+        # Label
+        lbl = msp.add_text(f"G{i+1}", dxfattribs={"height": TEXT_H_DIM, "layer": L_TEXT})
+        lbl.dxf.insert = (gx + g_width/2-1, (top + bot)/2-2)
         
-        t = msp.add_text(f"G{i+1}", dxfattribs={"height":TEXT_HEIGHT, "layer":LAYER_TEXT, "style":"ROMANS"})
-        t.dxf.insert = (gx + flange_w/2 + 2.0, (top+bot)/2)
-        t.dxf.halign = 0
-        t.dxf.valign = 1
+    # Cross Bracing
+    for i in range(NG-1):
+        x1, x2 = g_x[i], g_x[i+1]
+        msp.add_line((x1, top-deck_t), (x2, bot), dxfattribs={"layer": L_BRACING})
+        msp.add_line((x1, bot), (x2, top-deck_t), dxfattribs={"layer": L_BRACING})
+        _add_dim(msp, (x1, bot), (x2, bot), "Eq", offset=-5)
 
-    # 3. Bracing
-    for i in range(num_g-1):
-        gx1 = g_centers[i]
-        gx2 = g_centers[i+1]
-        msp.add_line((gx1, top-deck_thk), (gx2, bot), dxfattribs={"layer":LAYER_GRAPH})
-        msp.add_line((gx1, bot), (gx2, top-deck_thk), dxfattribs={"layer":LAYER_GRAPH})
-        
-        _dim_linear(msp, (gx1, bot), (gx2, bot), offset=-15.0, text="Eq")
+    # Dimensions (NO CHANGE - Dims should now fit due to safe scale)
+    _add_dim(msp, (left, top), (right, top), "Width of Carriageway", offset=5)
+    # Vertical dimension on LEFT side
+    _add_dim(
+        msp,
+        (left, top-deck_t),
+        (left, bot),
+        "Depth of Girder",
+        offset=-5,  # try 8 or 10; flip sign if it appears inside
+        vertical=True
+    )
 
-    # 4. Dimensions
-    _dim_linear(msp, (left, top), (right, top), offset=15.0, text="Width of Carriageway")
-    
-    # Depth Leader Style
-    dim_x = left - 15.0 
-    msp.add_line((left, top), (dim_x, top), dxfattribs={"layer":LAYER_DIM})
-    msp.add_line((left, bot), (dim_x, bot), dxfattribs={"layer":LAYER_DIM})
-    msp.add_line((dim_x, top), (dim_x, bot), dxfattribs={"layer":LAYER_DIM})
-    _arrow(msp, dim_x, top, 'up')
-    _arrow(msp, dim_x, bot, 'down')
-    t = msp.add_text("Depth of Girder", dxfattribs={"height":TEXT_HEIGHT, "layer":LAYER_TEXT, "style":"ROMANS", "rotation":90})
-    t.dxf.insert = (dim_x - 2.0, (top+bot)/2)
-    t.dxf.halign = 1
-    t.dxf.valign = 1
-    
-    # Overhangs
-    _dim_linear(msp, (left, top-deck_thk/2), (g_centers[0], top-deck_thk/2), offset=0, text="500", text_h=2.0)
-    _dim_linear(msp, (g_centers[-1], top-deck_thk/2), (right, top-deck_thk/2), offset=0, text="500", text_h=2.0)
 
-    l = msp.add_text("Section at Midspan", dxfattribs={"height":3.5, "layer":LAYER_TEXT, "style":"ROMANS"})
-    l.dxf.insert = (box[0] + 5, box[3] - 10)
 
-def _draw_pier_view(msp, box, params):
-    LPC = _mm(_to_float(params.get("pier_cap_length_m"), DEFAULTS["pier_cap_length_m"]))
-    DPCC = _mm(_to_float(params.get("pier_cap_depth_center_m"), DEFAULTS["pier_cap_depth_center_m"]))
-    DPCE = _mm(_to_float(params.get("pier_cap_depth_end_m"), DEFAULTS["pier_cap_depth_end_m"]))
+    _add_dim(msp, (left, top-deck_t/2), (g_x[0], top-deck_t/2), "500", offset=-5)
+    _add_dim(msp, (g_x[-1], top-deck_t/2), (right, top-deck_t/2), "500", offset=-5)
+
+def _render_pier(msp, box, params):
+    """Top Right: Pier Elevation"""
+    bx, by, bw, bh = box
+    scale = _calculate_pier_scale(box, params)
     
-    avail_w = (box[2] - box[0]) - VIEW_PADDING
-    avail_h = (box[3] - box[1]) - VIEW_PADDING
-    total_h = DPCC + 2000
-    scale = min(avail_w / LPC, avail_h / total_h)
+    LPC = _to_mm(params.get("pier_cap_length_m"))
+    DPCC = _to_mm(params.get("pier_cap_depth_center_m"))
+    DPCE = _to_mm(params.get("pier_cap_depth_end_m"))
     
-    cx = (box[0] + box[2]) / 2
-    cy = (box[1] + box[3]) / 2 + (total_h*scale)*0.2 
+    # 1. Define total required height (total_h) and depth-constrained height (H_required)
+    # The total drawing height is governed by the center depth plus the vertical support below.
+    # We use 2000mm as the assumed height of the column segment/bearing area below the pier cap.
+    H_core = DPCC + 2000 
     
-    draw_LPC = LPC * scale
-    draw_DPCC = DPCC * scale
-    draw_DPCE = DPCE * scale
+    # 2. Apply Margins to Dimensions for Safe Scaling
+    # The drawing will extend past LPC and H_core due to dimension lines.
     
-    left = cx - draw_LPC/2
-    right = cx + draw_LPC/2
+    # Length of Pier Cap (LPC) constrained by bw * 0.8
+    LPC_with_margin = LPC + 2 * MAX_DRAWING_MARGIN_MM 
+    
+    # Total Height (H_core) constrained by bh * 0.7
+    H_core_with_margin = H_core + 2 * MAX_DRAWING_MARGIN_MM 
+
+    # 3. Calculate Safe Scale Factor
+    # We use the most restrictive scale factor to ensure the drawing fits.
+    scale_l = (bw * 0.8) / LPC_with_margin
+    scale_h = (bh * 0.7) / H_core_with_margin
+    scale = min(scale_l, scale_h) # This is the unified/safe scale for this view
+    
+    # 4. Calculate Scaled Dimensions
+    dlpc = LPC * scale
+    ddc = DPCC * scale
+    dde = DPCE * scale
+    
+    # 5. Define Center and Coordinates
+    # The coordinate system is chosen to center the drawing around the pier cap.
+    # The center of the box is cx, cy. We shift the drawing up slightly (ddc/3) so the base 
+    # of the pier cap is lower, allowing room for the vertical column representation below.
+    cx, cy = bx + bw/2, by + bh/2 + ddc/3
+    left, right = cx - dlpc/2, cx + dlpc/2
     top = cy
-    bot_center = top - draw_DPCC
+    bot_mid = top - ddc
+    bot_end = top - dde
     
-    pts = [(left, top), (right, top), (right, top-draw_DPCE), (cx, bot_center), (left, top-draw_DPCE), (left, top)]
-    msp.add_lwpolyline(pts, dxfattribs={"layer":LAYER_GRAPH, "closed":True})
+    # 6. Pier Cap Polyline (NO CHANGE in geometry, points are now safely scaled)
+    pts = [
+        (left, top), (right, top), (right, bot_end),
+        (cx + 200*scale, bot_mid),
+        (cx + 200*scale, bot_mid - 1500*scale), # Assuming 1500mm is part of the 2000mm support below
+        (cx - 200*scale, bot_mid - 1500*scale),
+        (cx - 200*scale, bot_mid),
+        (left, bot_end)
+    ]
+    msp.add_lwpolyline(pts, dxfattribs={"layer": L_OBJECT, "closed": True})
     
-    cw = 1200 * scale
-    ch = 1500 * scale
-    msp.add_lwpolyline([(cx-cw/2, bot_center), (cx+cw/2, bot_center), (cx+cw/2, bot_center-ch), (cx-cw/2, bot_center-ch), (cx-cw/2, bot_center)], 
-                       dxfattribs={"layer":LAYER_GRAPH})
+    # 7. Dimensions (Offsets are small enough now due to the safe scale calculation)
+    _add_dim(msp, (cx, top), (cx, bot_mid), "Depth of Pier Cap at Centre", offset=5, vertical=True)
+    _add_dim(msp, (left, top), (left, bot_end), "Depth of Pier Cap at End", offset=-5, vertical=True)
     
-    msp.add_line((cx, top + 5.0), (cx, bot_center - ch - 5.0), dxfattribs={"layer":LAYER_CENTER})
+    
+    
+# --- Updated _render_plan function ---
+def _render_plan(msp, box, params):
+    """Bottom Left: Plan View"""
+    
+    # Calculate scale using the new safe function (assuming 'box' here is the Plan box)
+    scale = _calculate_plan_scale(box, params) 
+    
+    bx, by, bw, bh = box
+    
+    L = _to_mm(params.get("length_m"))
+    W = _to_mm(params.get("carriage_width_m"))
+    WPC = _to_mm(params.get("pier_cap_width_m"))
+    
+    # Use the calculated scale
+    dl, dw, dwpc = L * scale, W * scale, WPC * scale
+    
+    cx, cy = bx + bw/2, by + bh/2
+    left, right = cx - dl/2, cx + dl/2
+    top, bot = cy + dw/2, cy - dw/2
+   
+    # --- MODIFIED SECTION (Bridge Lines) ---
+    # These lines are drawn inside the core bridge area (left, right, top, bot). 
+    # They should not cause overflow. (NO CHANGE)
+    # Top line
+    msp.add_line((left, top-3), (right, top-3), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, top-1), (right, top-1), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, top-2), (right, top-2), dxfattribs={"layer": L_OBJECT})
+    # Center line
+    msp.add_line((left, cy), (right, cy), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, cy+1), (right, cy+1), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, cy-1), (right, cy-1), dxfattribs={"layer": L_OBJECT})
+    # Bottom line
+    msp.add_line((left, bot+3), (right, bot+3), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, bot+1), (right, bot+1), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, bot+2), (right, bot+2), dxfattribs={"layer": L_OBJECT})
 
-    _dim_linear(msp, (left, top), (right, top), offset=10.0, text=f"LPC={int(LPC)}")
-    _dim_linear(msp, (right, top-draw_DPCE), (right, top), offset=10.0, text=f"DPCE={int(DPCE)}", vertical=True)
+    # ------------------------
     
-    t = msp.add_text(f"DPCC={int(DPCC)}", dxfattribs={"height":2.5, "layer":LAYER_TEXT, "style":"ROMANS", "rotation":90})
-    t.dxf.insert = (cx+2.5, (bot_center+top)/2)
-    t.dxf.halign = 0 
-    t.dxf.valign = 1 
+    # Pier Caps (Ends) - MODIFIED: Use scaled offsets instead of fixed offsets
+    pc_l_end = left + dwpc
+    pc_r_start = right - dwpc
     
-    l = msp.add_text("Pier Elevation", dxfattribs={"height":3.5, "layer":LAYER_TEXT, "style":"ROMANS"})
-    l.dxf.insert = (box[0] + 5, box[3] - 10)
+    
+    # Draw pier caps as rectangles at the ends
+    msp.add_lwpolyline([(left-5, bot), (pc_l_end, bot), 
+                        (pc_l_end, top), (left-5, top)], 
+                       dxfattribs={"layer": L_OBJECT, "closed": True})
+    msp.add_lwpolyline([(right+5, bot), (pc_r_start, bot), 
+                        (pc_r_start, top), (right+5, top)], 
+                       dxfattribs={"layer": L_OBJECT, "closed": True})
+    
+    # Dimensions - MODIFIED: Calculate offsets in scaled units (mm)
+    
+    # dim_offset_outer was 12.0
+    dim_offset_outer_scaled = 10.0
+    # dim_offset_inner was 5.0
+    dim_offset_inner_scaled = 25.0 
 
-def _draw_plan_view(msp, box, params):
-    # Data - Convert to mm
-    L = _mm(_to_float(params.get("length_m"), DEFAULTS["length_m"]))
-    W = _mm(_to_float(params.get("carriage_width_m"), DEFAULTS["carriage_width_m"]))
-    WPC = _mm(_to_float(params.get("pier_cap_width_m"), DEFAULTS["pier_cap_width_m"]))
-    num_g = max(2, _to_int(params.get("num_girders"), DEFAULTS["num_girders"]))
+    # Width of Pier Cap (Top, outer)
+    # We must ensure the offset for the dimension is small enough, which is guaranteed 
+    # by the margin added to L and W in the scale calculation.
     
-    # Scale Calculation (Using explicit box keys for clarity, assuming the function is part of the class context)
-    avail_w = (box[2] - box[0]) - VIEW_PADDING
-    avail_h = (box[3] - box[1]) - VIEW_PADDING
+    # Use the outside edge of the drawing: left-pc_offset
+    _add_dim(msp, (left-5, top), (pc_l_end, top), 
+             "Width of Pier Cap", offset=dim_offset_outer_scaled, text_rotation=90)
     
-    draw_h_max = avail_h - 50.0 
-    scale = min(avail_w / L, draw_h_max / W)
+    _add_dim(msp, (pc_r_start, top), (right+5, top), 
+             "Width of Pier Cap", offset=dim_offset_outer_scaled, text_rotation=90)
     
-    draw_L = L * scale
-    draw_W = W * scale
-    draw_WPC = WPC * scale
-    
-    cx = (box[0] + box[2]) / 2
-    # Shift down to make room for stacked top dimensions
-    cy = (box[1] + box[3]) / 2 - 15.0 
-    
-    left = cx - draw_L/2
-    right = cx + draw_L/2
-    top = cy + draw_W/2
-    bot = cy - draw_W/2
-    
-    # 1. Deck Outline (Full Length and Width)
-    msp.add_lwpolyline([(left, bot), (right, bot), (right, top), (left, top), (left, bot)], 
-                       dxfattribs={"layer":LAYER_GRAPH, "closed":True})
-    
-    # 2. Pier Cap / Abutment Areas (Visual demarcation)
-    pc_left_end = left + draw_WPC
-    pc_right_start = right - draw_WPC
-    
-    # Draw solid lines for the pier caps to show the supporting structure
-    msp.add_lwpolyline([(left, bot), (pc_left_end, bot), (pc_left_end, top), (left, top), (left, bot)], dxfattribs={"layer":LAYER_GRAPH})
-    msp.add_lwpolyline([(pc_right_start, bot), (right, bot), (right, top), (pc_right_start, top), (pc_right_start, bot)], dxfattribs={"layer":LAYER_GRAPH})
-    
-    # 3. Girder Lines (Continuous from end to end)
-    g_spacing = draw_W / (num_g - 1)
-    for i in range(num_g):
-        gy = bot + i * g_spacing
-        # Draw girder line from one end of the bridge to the other
-        msp.add_line((left, gy), (right, gy), dxfattribs={"layer":LAYER_GRAPH})
-
-    # 4. Dimensions (Strictly Stacked)
-    
-    # Tier 1 (Inner): Width of Pier Cap (Offset 12.0)
-    dim_tier_1 = 12.0
-    _dim_linear(msp, (left, top), (pc_left_end, top), offset=dim_tier_1, text=f"Width of Pier Cap")
-    _dim_linear(msp, (pc_right_start, top), (right, top), offset=dim_tier_1, text=f"Width of Pier Cap")
-    
-    # Tier 2 (Outer): Length of Span (Offset 30.0)
-    dim_tier_2 = 30.0 
-    # Length of Span is the distance between the pier caps
-    _dim_linear(msp, (pc_left_end, top), (pc_right_start, top), offset=dim_tier_2, text=f"Length of Bridge = {int(L)}")
-    
-    # Side Dimension: Carriageway Width
-    _dim_linear(msp, (right, bot), (right, top), offset=12.0, text="Carriageway Width", vertical=True)
-    
-    # View Label
-    l = msp.add_text("Bridge Plan", dxfattribs={"height":3.5, "layer":LAYER_TEXT, "style":"ROMANS"})
-    l.dxf.insert = (box[0] + 5, box[3] - 10)
-
-
+    # Length of Bridge (Top, inner)
+    # The dimension is shown between the inner edges of the pier caps (pc_l_end-pc_offset, pc_r_start+pc_offset)
+    _add_dim(msp, (left, top), (right, top), 
+             f"Length of Bridge", offset=dim_offset_inner_scaled)
 # ---------- MAIN ----------
+
 def create_bridge_dxf(params: Dict, out_path: str):
-    p = {}
-    for k,v in DEFAULTS.items(): 
-        val = params.get(k, params.get(k.capitalize(), v))
-        p[k] = val
-        
-    p["drawing_number"] = params.get("drawing_number", "UNNAMED")
-    p["length_m"] = _to_float(params.get("length of Bridg", DEFAULTS["length_m"]))
-    p["depth_mm"] = _to_float(params.get("Depth of Bridg", DEFAULTS["depth_mm"]))
-    p["carriage_width_m"] = _to_float(params.get("Width of Carria", DEFAULTS["carriage_width_m"]))
-    p["num_girders"] = _to_int(params.get("Circ Length of Pier", params.get("num_girders", 3)))
-    p["pier_cap_length_m"] = _to_float(params.get("Depth of Pier C", DEFAULTS["pier_cap_length_m"])) 
-    p["pier_cap_width_m"] = _to_float(params.get("Width of Pier Cap", DEFAULTS["pier_cap_width_m"]))
-    p["pier_cap_depth_center_m"] = _to_float(params.get("Depth of Pier C.1", DEFAULTS["pier_cap_depth_center_m"]))
-    p["pier_cap_depth_end_m"] = _to_float(params.get("Depth of Pier C", DEFAULTS["pier_cap_depth_end_m"]))
-    
-    doc = _new_doc()
+    doc = _setup_doc()
     msp = doc.modelspace()
     
-    msp.add_lwpolyline([(0,0),(A3_W,0),(A3_W,A3_H),(0,A3_H),(0,0)], dxfattribs={"layer":LAYER_BORDER})
-    px1, py1 = MARGIN, MARGIN
-    px2, py2 = A3_W - MARGIN, A3_H - MARGIN
-    msp.add_lwpolyline([(px1,py1),(px2,py1),(px2,py2),(px1,py2),(px1,py1)], dxfattribs={"layer":LAYER_BORDER})
+    # 1. Main Border
+    _draw_rect(msp, 0, 0, A3_W, A3_H)
     
-    box_sec, box_pier, box_plan = _layout_boxes(px1, py1, px2, py2)
+    # CALCULATE EFFECTIVE DRAWING AREA
+    eff_x = MARGIN_LEFT
+    eff_y = MARGIN_BOTTOM
+    eff_w = A3_W - MARGIN_LEFT - MARGIN_RIGHT
+    eff_h = A3_H - MARGIN_BOTTOM - MARGIN_TOP
     
-    _draw_section_view(msp, box_sec, p)
-    _draw_pier_view(msp, box_pier, p)
-    _draw_plan_view(msp, box_plan, p)
+    # Draw Inner Border Line
+    _draw_rect(msp, eff_x, eff_y, eff_w, eff_h)
     
-    tx1, ty1 = px2 - TITLEBLOCK_W, py1
-    tx2, ty2 = px2, py1 + TITLEBLOCK_H
-    msp.add_lwpolyline([(tx1,ty1),(tx2,ty1),(tx2,ty2),(tx1,ty2),(tx1,ty1)], dxfattribs={"layer":LAYER_BORDER})
+    # --- MODIFIED LAYOUT CALCULATION (4 Equal Quadrants) ---
     
-    t = msp.add_text(str(p["drawing_number"]), dxfattribs={"height":7.0, "layer":LAYER_TEXT, "style":"ROMANS"})
-    t.dxf.insert = ((tx1+tx2)/2, (ty1+ty2)/2)
-    t.dxf.halign = 1
-    t.dxf.valign = 1
+    # Calculate Midpoints for 4 Quadrant Split
+    mid_x = eff_x + eff_w / 2
+    mid_y = eff_y + eff_h / 2
     
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.saveas(str(out_path))
+    # View Width and Height (Half of the effective area)
+    view_w = eff_w / 2
+    view_h = eff_h / 2
+    
+    # Box Coordinates: (x, y, w, h)
+    
+    # Left Top: Cross Section
+    box_sec = (eff_x, mid_y, view_w, view_h)
+    
+    # Right Top: Pier Elevation
+    box_pier = (mid_x, mid_y, view_w, view_h)
+    
+    # Left Bottom: Plan View
+    box_plan = (eff_x, eff_y, view_w, view_h)
+    
+    # The Bottom Right quadrant is left empty (or reserved for Title Block)
+    # The Title Block will slightly overlap this quadrant.
+    
+    # --------------------------------------------------------
+    
+    # 3. Render Views
+    # NOTE: These functions still use the old scaling logic (which may cause distortion)
+    _render_section(msp, box_sec, params)
+    _render_pier(msp, box_pier, params)
+    _render_plan(msp, box_plan, params)
+  # 4. Title Block (Bottom Right)
+    tb_x = A3_W - MARGIN_RIGHT - TITLEBLOCK_W
+    tb_y = MARGIN_BOTTOM
+
+    _draw_rect(msp, tb_x, tb_y, TITLEBLOCK_W, TITLEBLOCK_H)
+    doc.styles.new("BOLD_TEXT", dxfattribs={
+         "font": "arial.ttf",
+    })
+
+    # Drawing Number Text (Perfectly Centered)
+    dn = str(params.get("drawing_number", "UNKNOWN"))
+
+    mtext = msp.add_mtext(
+        dn,
+        dxfattribs={
+            "layer": L_TEXT,
+            "style": "BOLD_TEXT",
+            "char_height": TEXT_H_BIG   # <-- correct attribute
+        }
+    )
+
+    # True center placement
+    mtext.set_location(
+        (tb_x + TITLEBLOCK_W / 2, tb_y + TITLEBLOCK_H / 2),
+        attachment_point=5   # Middle Center
+    )
+
+    doc.saveas(out_path)
     return str(out_path)
