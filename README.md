@@ -1,28 +1,8 @@
-# 2D Steel Bridge Drawing Generator
+# 2D Steel Bridge Design - DXF Generator
 
-An automated Python-based CAD tool built with `ezdxf` to generate standardized technical drawings for steel bridge structures. This project automates the drafting of Cross Sections, Pier Elevations, and Plan Views directly into A3-sized DXF files.
+An automated Python tool built using `ezdxf` to generate standardized technical drawings for steel bridge structures. This project automates the drafting process by taking structural parameters (from Excel or dictionaries) and producing A3-sized CAD drawings with accurate scaling and dimensioning.
 
 ---
-
-## 📂 Project Structure
-
-As shown in the development environment, the project is organized as follows:
-
-```text
-2D_STEEL_DESIGN/
-├── input/
-│   ├── dxf-input-values.xlsx      # Excel sheet containing bridge parameters
-│   └── dxf-input-values copy.xlsx # Backup of input parameters
-├── output/
-│   └── 2025-06-11-R1-AB-01.dxf    # Generated CAD drawings
-├── src/
-│   ├── __init__.py
-│   ├── dxf_generator.py           # Core rendering engine and ezdxf logic
-│   ├── main.py                    # Application entry point
-│   ├── reader.py                  # Input parser (Excel/Dict)
-│   └── utils.py                   # Geometric and scaling helpers
-├── venv/                          # Python virtual environment
-└── requirements.txt               # Project dependencies (ezdxf, openpyxl, etc.)
 
 ## 🚀 Features
 
@@ -37,3 +17,22 @@ As shown in the development environment, the project is organized as follows:
     * **Bottom Left:** Plan View showing pier caps.
     * **Bottom Right:** Centered Title Block with drawing numbers.
 * **Layer Management:** Organized CAD layers (`BORDER`, `OBJECT`, `DIMENSIONS`, `TEXT`, `BRACING`) with specific lineweights and colors for industry-standard plotting.
+
+---
+
+## 📂 Project Structure
+
+```text
+2D_STEEL_DESIGN/
+├── input/
+│   ├── dxf-input-values.xlsx      # Parameter source (Excel)
+│   └── dxf-input-values copy.xlsx # Backup/Sample input
+├── output/                        # Destination for generated .dxf files
+├── src/
+│   ├── dxf_generator.py           # Core drawing & geometry logic
+│   ├── main.py                    # Script entry point
+│   ├── reader.py                  # Excel/Input data parser
+│   ├── utils.py                   # Geometric helper functions
+│   └── __init__.py
+├── requirements.txt               # Python dependencies
+└── venv/                          # Virtual environment
