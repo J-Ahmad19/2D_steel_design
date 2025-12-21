@@ -359,12 +359,32 @@ def _render_section(msp, box, params):
         gx = (left + overhang) + i*spacing
         g_x.append(gx)
         # Top Flange
-        msp.add_line((gx-g_width/2, top-deck_t), (gx+g_width/2, top-deck_t), dxfattribs={"layer": L_OBJECT})
+        # Giving the flange a physical thickness (e.g., 2.0 drawing units)
+        msp.add_lwpolyline(
+            [(gx - g_width/2, top - deck_t), (gx + g_width/2, top - deck_t)], 
+            dxfattribs={
+                "layer": L_OBJECT, 
+                "const_width": 0.5  # Physical thickness in your mm scale
+            }
+        )
         # Web
-        msp.add_line((gx, top-deck_t), (gx, bot), dxfattribs={"layer": L_OBJECT})
+        # Giving the web a physical width (e.g., 1.5 units wide)
+        msp.add_lwpolyline(
+            [(gx, top - deck_t), (gx, bot)], 
+            dxfattribs={
+                "layer": L_OBJECT, 
+                "const_width": 0.2  # This width is in your drawing units (mm)
+            }
+        )
         # Bottom Flange
-        msp.add_line((gx-g_width/2, bot), (gx+g_width/2, bot), dxfattribs={"layer": L_OBJECT})
-        
+        msp.add_lwpolyline(
+            [(gx - g_width/2, bot), (gx + g_width/2, bot)], 
+            dxfattribs={
+                "layer": L_OBJECT, 
+                "const_width": 0.5  # Physical thickness in your mm scale
+            }
+        )
+
         # Label
         lbl = msp.add_text(f"G{i+1}", dxfattribs={"height": TEXT_H_DIM, "layer": L_TEXT})
         lbl.dxf.insert = (gx + g_width/2-1, (top + bot)/2-2)
@@ -479,17 +499,36 @@ def _render_plan(msp, box, params):
     # They should not cause overflow. (NO CHANGE)
     # Top line
     msp.add_line((left, top-3), (right, top-3), dxfattribs={"layer": L_OBJECT})
-    msp.add_line((left, top-1), (right, top-1), dxfattribs={"layer": L_OBJECT})
-    msp.add_line((left, top-2), (right, top-2), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, top-1), (right, top-1), dxfattribs={"layer": L_OBJECT,"lineweight": 60})
+    msp.add_lwpolyline(
+    [(left, top-2), (right, top-2)], 
+    dxfattribs={
+        "layer": L_OBJECT,
+        "const_width": 0.3  # Adjust this value to your desired thickness
+    }
+)
     # Center line
-    msp.add_line((left, cy), (right, cy), dxfattribs={"layer": L_OBJECT})
-    msp.add_line((left, cy+1), (right, cy+1), dxfattribs={"layer": L_OBJECT})
+   # This creates a line that is physically 'thick' in the drawing space
+    msp.add_lwpolyline(
+        [(left, cy), (right, cy)], 
+        dxfattribs={
+            "layer": L_OBJECT, 
+            "const_width": 0.3  # Adjust this value based on your scale
+        }
+    )
+    msp.add_line((left, cy+1), (right, cy+1), dxfattribs={"layer": L_OBJECT,"lineweight": 60})
     msp.add_line((left, cy-1), (right, cy-1), dxfattribs={"layer": L_OBJECT})
     # Bottom line
     msp.add_line((left, bot+3), (right, bot+3), dxfattribs={"layer": L_OBJECT})
-    msp.add_line((left, bot+1), (right, bot+1), dxfattribs={"layer": L_OBJECT})
-    msp.add_line((left, bot+2), (right, bot+2), dxfattribs={"layer": L_OBJECT})
-
+    msp.add_line((left, bot+1), (right, bot+1), dxfattribs={"layer": L_OBJECT,"lineweight": 60})
+    # Increasing physical width for the bottom edge middle line
+    msp.add_lwpolyline(
+        [(left, bot+2), (right, bot+2)], 
+        dxfattribs={
+            "layer": L_OBJECT, 
+            "const_width": 0.3  # Physical units (mm)
+        }
+    )
     # ------------------------
     
     # Pier Caps (Ends) - MODIFIED: Use scaled offsets instead of fixed offsets
