@@ -6,18 +6,19 @@ from typing import Dict
 A3_W = 420.0
 A3_H = 297.0
 
-MARGIN_LEFT = 30.0
-MARGIN_RIGHT = 30.0
-MARGIN_TOP = 15.0
-MARGIN_BOTTOM = 15.0
+MARGIN_LEFT = 20.0
+MARGIN_RIGHT = 20.0
+MARGIN_TOP = 10.0
+MARGIN_BOTTOM = 10.0
 
-TITLEBLOCK_W = 160.0 
-TITLEBLOCK_H = 40.0
+TITLEBLOCK_W = 180.0
+TITLEBLOCK_H = 55.0
+
 
 # Text Sizes
-TEXT_H_DIM = 1.5       # Dimension text
+TEXT_H_DIM = 3.0     # Dimension text
 TEXT_H_TITLE = 3.5     # View titles (e.g. "SECTION AT MIDSPAN")
-TEXT_H_BIG = 10.0      # Drawing Number
+TEXT_H_BIG = 12.0      # Drawing Number
 
 # Dimensioning
 DIM_OFFSET = 12.0      # Distance from object
@@ -46,6 +47,53 @@ DEFAULTS = {
     "drawing_number": "2025-06-11-R1-AB-01"
 }
 
+# ---------- GLOBAL TRUE MAX DESIGN ENVELOPE ----------
+MAX_BRIDGE_LENGTH_M = 45.0
+MAX_CARRIAGE_WIDTH_M = 13.5
+MAX_GIRDER_DEPTH_MM = 3000.0
+MAX_PIER_CAP_LENGTH_M = 15.0
+MAX_PIER_TOTAL_HEIGHT_MM = 4500.0
+MAX_DRAWING_MARGIN_MM = 30.0
+
+TITLE_BAND = 10
+VIEW_TOP_GAP = 8      # fixed gap between SCALE and drawing
+
+# ---------- IMPROVED: STANDARD SCALE LOGIC ----------
+def _auto_scale(box, real_w, real_h, margin=10):
+    """
+    Calculates the largest standard engineering scale that fits the box.
+    """
+    bx, by, bw, bh = box
+    
+    # 1. Calculate the raw maximum scale factor that physically fits
+    # (Allowing space for titles and margins)
+    fit_w = (bw - 2*margin) / real_w
+    fit_h = (bh - TITLE_BAND - 2*margin) / real_h
+    
+    # We take the minimum of the two to ensure it fits in both directions
+    # 0.95 factor provides a tiny safety buffer so lines don't touch the box edge
+    max_allowed_scale = min(fit_w, fit_h) * 0.95
+    
+    # 2. Define Standard Engineering Scales (Denominators)
+    # These are common ratios used in civil/structural engineering.
+    STANDARD_DENOMINATORS = [
+        1, 2, 2.5, 5, 10, 12.5, 15, 20, 25, 30, 40, 50, 75, 100, 
+        125, 150, 200, 250, 300, 400, 500, 750, 1000, 1250, 1500, 2000, 2500, 5000
+    ]
+    
+    # 3. Find the largest scale (smallest denominator) where (1/den) <= max_allowed_scale
+    # We sort denominators to ensure we check the biggest scales first.
+    selected_den = STANDARD_DENOMINATORS[-1]  # Start with smallest possible scale
+    
+    for den in STANDARD_DENOMINATORS:
+        current_scale = 1.0 / den
+        if current_scale <= max_allowed_scale:
+            selected_den = den
+            break # We found the largest standard scale that fits!
+            
+    return 1.0 / selected_den
+
+
 def _to_mm(val_m):
     try: return float(val_m) * 1000.0
     except: return 0.0
@@ -55,11 +103,12 @@ def _setup_doc():
     doc.header["$INSUNITS"] = 4 # Millimeters
     
     # Layers
-    doc.layers.new(L_BORDER, dxfattribs={"color": C_WHITE, "lineweight": 60})
-    doc.layers.new(L_OBJECT, dxfattribs={"color": C_WHITE, "lineweight": 45})
-    doc.layers.new(L_BRACING, dxfattribs={"color": C_WHITE, "lineweight": 30})
-    doc.layers.new(L_DIM,    dxfattribs={"color": C_WHITE, "lineweight": 25})
-    doc.layers.new(L_TEXT,   dxfattribs={"color": C_WHITE, "lineweight": 25})
+    doc.layers.new(L_BORDER, dxfattribs={"color":7, "lineweight": 70})
+    doc.layers.new(L_OBJECT, dxfattribs={"color":7, "lineweight": 50})
+    doc.layers.new(L_BRACING, dxfattribs={"color":7, "lineweight": 35})
+    doc.layers.new(L_DIM,    dxfattribs={"color":7, "lineweight": 25})
+    doc.layers.new(L_TEXT,   dxfattribs={"color":7, "lineweight": 25})
+
 
     if "ROMANS" not in doc.styles:
         doc.styles.new("ROMANS", dxfattribs={"font": "romans.shx", "width": 0.8})
@@ -122,8 +171,13 @@ def _draw_arrow(msp, center_point, size, angle_deg):
         
     # Draw the filled arrow (closed polyline)
     # Using 'L_OBJECT' or a dedicated layer for fill.
-    msp.add_lwpolyline(rotated_points, dxfattribs={"layer": L_TERMINATOR, "closed": True, "flags": 1})
-    # NOTE: 'flags: 1' might be needed for specific libraries to force closing the polyline.
+    # Draw the filled arrow (SOLID)
+    p1, p2, p3 = rotated_points
+    msp.add_solid(
+        [p1, p2, p3, p3], 
+        dxfattribs={"layer": L_TERMINATOR}
+    )
+
     
 # --- END OF HELPER FUNCTION ---
 
@@ -133,7 +187,9 @@ def _draw_rect(msp, x, y, w, h, layer=L_BORDER):
     pts = [(x, y), (x+w, y), (x+w, y+h), (x, y+h), (x, y)]
     msp.add_lwpolyline(pts, dxfattribs={"layer": layer, "closed": True})
 
-def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0,override=False):
+
+
+def _add_dim(msp, p1, p2, text_val, offset: float = 10.0, vertical: bool = False, text_rotation: float = 0, text_height: float = TEXT_H_DIM):
     x1, y1 = p1
     x2, y2 = p2
 
@@ -200,12 +256,12 @@ def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0
             text_x_shift = (2 * ARROW_SIZE) * gap_direction
 
             if text_rotation == 0:
-                text_x_shift += (0.5 * TEXT_H_DIM + 4* ARROW_SIZE) * gap_direction
+                text_x_shift += (0.5 * text_height + 4* ARROW_SIZE) * gap_direction
 
             t = msp.add_text(
                 str(text_val),
                 dxfattribs={
-                    "height": TEXT_H_DIM,
+                    "height": text_height,
                     "layer": L_TEXT,
                     "style": "ROMANS"
                 }
@@ -257,7 +313,7 @@ def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0
             t = msp.add_text(
                 str(text_val),
                 dxfattribs={
-                    "height": TEXT_H_DIM,
+                    "height": text_height,
                     "layer": L_TEXT,
                     "style": "ROMANS"
                 }
@@ -272,77 +328,77 @@ def _add_dim(msp, p1, p2, text_val, offset=10.0, vertical=False, text_rotation=0
             t.dxf.insert = pos
             t.dxf.align_point = pos
 
+def _add_scale_text(msp, box, scale_value):
+    bx, by, bw, bh = box
+
+    center_x = bx + bw/2
+
+    TITLE_BAND = 10
+    # place safely INSIDE box, near top but not touching
+    top_y = by + bh - (TITLE_BAND / 2)
+
+    scale_den = max(1, round(1 / scale_value))
+    scale_text = f"SCALE 1:{scale_den}"
+
+    t = msp.add_text(
+        scale_text,
+        dxfattribs={
+            "height": TEXT_H_TITLE,
+            "layer": L_TEXT,
+            "style": "ROMANS"
+        }
+    )
+
+    t.dxf.halign = 1
+    t.dxf.valign = 2
+    t.dxf.insert = (center_x, top_y)
+    t.dxf.align_point = (center_x, top_y)
+
+
+
+
 
 
 # ---------- VIEW RENDERERS ----------
 # --- New Function to Calculate Scale Safely ---
 # This function calculates a single scale factor that safely fits all dimensions (L, W, D) 
 # and their required margins into the given box (bx, by, bw, bh).
-MAX_DRAWING_MARGIN_MM = 15.0
-
-def _calculate_section_scale(box, params):
-    bx, by, bw, bh = box
-
-    W = _to_mm(params["carriage_width_m"])
-    D = params["depth_mm"]
-
-    Wm = W + 2*MAX_DRAWING_MARGIN_MM
-    Dm = D + 2*MAX_DRAWING_MARGIN_MM
-
-    sx = (bw * 0.85) / Wm
-    sy = (bh * 0.70) / Dm
-
-    return min(sx, sy)
-
-def _calculate_pier_scale(box, params):
-    bx, by, bw, bh = box
-
-    LPC = _to_mm(params["pier_cap_length_m"])
-    DPCC = _to_mm(params["pier_cap_depth_center_m"])
-
-    H_core = DPCC + 2000.0    # pier + assumed column part
-
-    Lm = LPC + 2 * MAX_DRAWING_MARGIN_MM
-    Hm = H_core + 2 * MAX_DRAWING_MARGIN_MM
-
-    sx = (bw * 0.80) / Lm     # 80% width
-    sy = (bh * 0.70) / Hm     # 70% height
-    return min(sx, sy)
-
-
-def _calculate_plan_scale(box, params):
-    bx, by, bw, bh = box
-
-    L = _to_mm(params["length_m"])
-    W = _to_mm(params["carriage_width_m"])
-
-    Lm = L + 2 * MAX_DRAWING_MARGIN_MM
-    Wm = W + 2 * MAX_DRAWING_MARGIN_MM
-
-    sx = (bw * 0.9) / Lm     # 85% width
-    sy = (bh * 0.8) / Wm     # 70% height
-    return min(sx, sy)
 
 
 # --- Updated _render_section function ---
 
 def _render_section(msp, box, params):
     """Top Left: Cross Section"""
-    
-    # Calculate scale using the new safe function (assuming 'box' here is the CS box)
-    scale = _calculate_section_scale(box, params) 
-    
+  
+
     bx, by, bw, bh = box
     
     W = _to_mm(params.get("carriage_width_m"))
     D = float(params.get("depth_mm"))
     NG = int(params.get("num_girders"))
+
+    scale = _auto_scale(box, real_w=W, real_h=D)
+
+    depth_girder_mm=int(params.get("depth_mm"))
+    depth_girder_text=f"{depth_girder_mm} "
     
+    carriage_mm = int(_to_mm(params.get("carriage_width_m")))
+    carriage_text = f"{carriage_mm} "
+
     # Use the calculated scale
     dw, dd = W * scale, D * scale
     deck_t = 250 * scale
     
-    cx, cy = bx + bw/2, by + bh/2
+    cx = bx + bw/2
+
+    view_top = by + bh - TITLE_BAND - VIEW_TOP_GAP-30
+
+    top = view_top
+    bot = top - dd
+    cy  = (top + bot)/2
+
+
+
     left, right = cx - dw/2, cx + dw/2
     top, bot = cy + dd/2, cy - dd/2
     
@@ -391,112 +447,137 @@ def _render_section(msp, box, params):
         # Label
         lbl = msp.add_text(f"G{i+1}", dxfattribs={"height": TEXT_H_DIM, "layer": L_TEXT})
         lbl.dxf.insert = (gx + g_width/2-1, (top + bot)/2-2)
-        
+    
+    # Cross Bracing + REAL EQ SPACING TEXT
+    spacing_real_mm = int((W - 2*500) / (NG - 1))   # REAL WORLD VALUE
+    spacing_text = f"{spacing_real_mm}"
     # Cross Bracing
     for i in range(NG-1):
         x1, x2 = g_x[i], g_x[i+1]
         msp.add_line((x1, top-deck_t), (x2, bot), dxfattribs={"layer": L_BRACING})
         msp.add_line((x1, bot), (x2, top-deck_t), dxfattribs={"layer": L_BRACING})
-        _add_dim(msp, (x1, bot), (x2, bot), "Eq", offset=-5)
+        # Dimension with REAL VALUE instead of "Eq"
+        _add_dim(
+            msp,
+            (x1, bot),
+            (x2, bot),
+            spacing_text,
+            offset=-10
+        )
 
     # Dimensions (NO CHANGE - Dims should now fit due to safe scale)
-    _add_dim(msp, (left, top), (right, top), "Width of Carriageway", offset=5)
+    _add_dim(msp, (left, top), (right, top), carriage_text, offset=10)
     # Vertical dimension on LEFT side
     _add_dim(
         msp,
         (left, top-deck_t),
         (left, bot),
-        "Depth of Girder",
-        offset=-5,  # try 8 or 10; flip sign if it appears inside
+        depth_girder_text,
+        offset=-10,  # try 8 or 10; flip sign if it appears inside
         vertical=True,
         text_rotation=90
     )
 
 
 
-    _add_dim(msp, (left, top-deck_t/2), (g_x[0], top-deck_t/2), "500", offset=-5)
-    _add_dim(msp, (g_x[-1], top-deck_t/2), (right, top-deck_t/2), "500", offset=-5)
+    _add_dim(msp, (left, bot), (g_x[0]-g_width/2, bot), "500", offset=-10,text_height=1.5)
+    _add_dim(msp, (g_x[-1]+g_width/2, bot), (right, bot), "500", offset=-10,text_height=1.5)
+
+    _add_scale_text(msp, box, scale)
 
 def _render_pier(msp, box, params):
     """Top Right: Pier Elevation"""
     bx, by, bw, bh = box
-    scale = _calculate_pier_scale(box, params)
     
-    LPC = _to_mm(params.get("pier_cap_length_m"))
+    
+    LPC  = _to_mm(params.get("pier_cap_length_m"))
     DPCC = _to_mm(params.get("pier_cap_depth_center_m"))
     DPCE = _to_mm(params.get("pier_cap_depth_end_m"))
-    
-    # 1. Define total required height (total_h) and depth-constrained height (H_required)
-    # The total drawing height is governed by the center depth plus the vertical support below.
-    # We use 2000mm as the assumed height of the column segment/bearing area below the pier cap.
-    H_core = DPCC + 2000 
-    
-    # 2. Apply Margins to Dimensions for Safe Scaling
-    # The drawing will extend past LPC and H_core due to dimension lines.
-    
-    # Length of Pier Cap (LPC) constrained by bw * 0.8
-    LPC_with_margin = LPC + 2 * MAX_DRAWING_MARGIN_MM 
-    
-    # Total Height (H_core) constrained by bh * 0.7
-    H_core_with_margin = H_core + 2 * MAX_DRAWING_MARGIN_MM 
 
-    # 3. Calculate Safe Scale Factor
-    # We use the most restrictive scale factor to ensure the drawing fits.
-    scale_l = (bw * 0.8) / LPC_with_margin
-    scale_h = (bh * 0.7) / H_core_with_margin
-    scale = min(scale_l, scale_h) # This is the unified/safe scale for this view
-    
-    # 4. Calculate Scaled Dimensions
-    dlpc = LPC * scale
-    ddc = DPCC * scale
-    dde = DPCE * scale
-    
-    # 5. Define Center and Coordinates
-    # The coordinate system is chosen to center the drawing around the pier cap.
-    # The center of the box is cx, cy. We shift the drawing up slightly (ddc/3) so the base 
-    # of the pier cap is lower, allowing room for the vertical column representation below.
-    cx, cy = bx + bw/2, by + bh/2 + ddc/3
-    left, right = cx - dlpc/2, cx + dlpc/2
-    top = cy
+    scale = _auto_scale(box, real_w=LPC, real_h=DPCC + 2000)
+
+    pier_cap_length_mm = int(params.get("pier_cap_length_m")*1000)
+    pier_cap_length_text = f"{pier_cap_length_mm} m"
+
+    pier_cap_depth_center_mm = int(params.get("pier_cap_depth_center_m")*1000)
+    pier_cap_depth_center_text = f"{pier_cap_depth_center_mm} "
+
+    pier_cap_depth_end_mm = int(params.get("pier_cap_depth_end_m")*1000)
+    pier_cap_depth_end_text = f"{pier_cap_depth_end_mm} "
+
+    H_core = DPCC + 2000  # real height in mm (cap depth + assumed pier column)
+
+    # ----- SCALED DIMENSIONS -----
+    dlpc = LPC  * scale
+    ddc  = DPCC * scale
+    dde  = DPCE * scale
+
+    cx = bx + bw/2
+
+    view_top = by + bh - TITLE_BAND - VIEW_TOP_GAP-30
+
+    top = view_top
     bot_mid = top - ddc
     bot_end = top - dde
+    cy = (top + bot_mid)/2
+
+    left, right = cx - dlpc/2, cx + dlpc/2
     
-    # 6. Pier Cap Polyline (NO CHANGE in geometry, points are now safely scaled)
+
+    # ----- SHAPE -----
     pts = [
         (left, top), (right, top), (right, bot_end),
         (cx + 200*scale, bot_mid),
-        (cx + 200*scale, bot_mid - 1500*scale), # Assuming 1500mm is part of the 2000mm support below
+        (cx + 200*scale, bot_mid - 1500*scale),
         (cx - 200*scale, bot_mid - 1500*scale),
         (cx - 200*scale, bot_mid),
         (left, bot_end)
     ]
     msp.add_lwpolyline(pts, dxfattribs={"layer": L_OBJECT, "closed": True})
-    
-    # 7. Dimensions (Offsets are small enough now due to the safe scale calculation)
-    _add_dim(msp, (cx, top), (cx, bot_mid), "  Depth of Pier Cap at Centre", offset=5, vertical=True,text_rotation=0)
-    _add_dim(msp, (left, top), (left, bot_end), "Depth of Pier Cap at End", offset=-5, vertical=True,text_rotation=90)
-    
-    
-    
+
+    # ----- DIMENSIONS -----
+    _add_dim(msp, (cx, top), (cx, bot_mid),
+             pier_cap_depth_center_text,
+             offset=5, vertical=True, text_rotation=0)
+
+    _add_dim(msp, (left, top), (left, bot_end),
+             pier_cap_depth_end_text,
+             offset=-5, vertical=True, text_rotation=90)
+
+    _add_scale_text(msp, box, scale)
+
 # --- Updated _render_plan function ---
 def _render_plan(msp, box, params):
     """Bottom Left: Plan View"""
     
-    # Calculate scale using the new safe function (assuming 'box' here is the Plan box)
-    scale = _calculate_plan_scale(box, params) 
-    
+   
     bx, by, bw, bh = box
     
     L = _to_mm(params.get("length_m"))
     W = _to_mm(params.get("carriage_width_m"))
     WPC = _to_mm(params.get("pier_cap_width_m"))
     
+    scale = _auto_scale(box, real_w=L, real_h=W)
+
     # Use the calculated scale
     dl, dw, dwpc = L * scale, W * scale, WPC * scale
+    cx = bx + bw/2
+
+    view_top = by + bh - TITLE_BAND - VIEW_TOP_GAP-30
+
+    top = view_top
+    bot = top - dw
+    cy  = (top + bot)/2
+
+
+    # include pier caps & 5mm offset in bounding width
+    plan_total_w = dl + (2 * dwpc) + 10     # +10 because you use -5 and +5
+    plan_total_h = dw
+
+    left  = cx - plan_total_w/2 + dwpc + 5
+    right = cx + plan_total_w/2 - dwpc - 5
+
     
-    cx, cy = bx + bw/2, by + bh/2
-    left, right = cx - dl/2, cx + dl/2
-    top, bot = cy + dw/2, cy - dw/2
    
     # --- MODIFIED SECTION (Bridge Lines) ---
     # These lines are drawn inside the core bridge area (left, right, top, bot). 
@@ -514,14 +595,14 @@ def _render_plan(msp, box, params):
     # Center line
    # This creates a line that is physically 'thick' in the drawing space
     msp.add_lwpolyline(
-        [(left, cy), (right, cy)], 
+        [(left, cy-2), (right, cy-2)], 
         dxfattribs={
             "layer": L_OBJECT, 
             "const_width": 0.3  # Adjust this value based on your scale
         }
     )
-    msp.add_line((left, cy+1), (right, cy+1), dxfattribs={"layer": L_OBJECT,"lineweight": 60})
-    msp.add_line((left, cy-1), (right, cy-1), dxfattribs={"layer": L_OBJECT})
+    msp.add_line((left, cy-1), (right, cy-1), dxfattribs={"layer": L_OBJECT,"lineweight": 60})
+    msp.add_line((left, cy-3), (right, cy-3), dxfattribs={"layer": L_OBJECT})
     # Bottom line
     msp.add_line((left, bot+3), (right, bot+3), dxfattribs={"layer": L_OBJECT})
     msp.add_line((left, bot+1), (right, bot+1), dxfattribs={"layer": L_OBJECT,"lineweight": 60})
@@ -551,25 +632,45 @@ def _render_plan(msp, box, params):
     # Dimensions - MODIFIED: Calculate offsets in scaled units (mm)
     
     # dim_offset_outer was 12.0
-    dim_offset_outer_scaled = 25
+    dim_offset_outer_scaled = 20
     # dim_offset_inner was 5.0
     dim_offset_inner_scaled = 10 
 
     # Width of Pier Cap (Top, outer)
     # We must ensure the offset for the dimension is small enough, which is guaranteed 
     # by the margin added to L and W in the scale calculation.
-    
+    length_mm = int(_to_mm(params.get("length_m")))
+    width_mm = int(_to_mm(params.get("pier_cap_width_m")))
+    carriage_mm= int(_to_mm(params.get("carriage_width_m")))
+
+    length_text = f"{length_mm} "
+    width_text = f"{width_mm} "
+    carriage_text= f"{carriage_mm} "
     # Use the outside edge of the drawing: left-pc_offset
     _add_dim(msp, (left-5, top), (pc_l_end, top), 
-             "Width of Pier Cap", offset=dim_offset_outer_scaled)
+             width_text, offset=dim_offset_outer_scaled,text_height=2.5)
     
     _add_dim(msp, (pc_r_start, top), (right+5, top), 
-             "Width of Pier Cap", offset=dim_offset_outer_scaled)
+             width_text, offset=dim_offset_outer_scaled,text_height=2.5)
     
     # Length of Bridge (Top, inner)
     # The dimension is shown between the inner edges of the pier caps (pc_l_end-pc_offset, pc_r_start+pc_offset)
     _add_dim(msp, (left, top), (right, top), 
-             f"Length of Bridge", offset=dim_offset_inner_scaled)
+             length_text, offset=dim_offset_inner_scaled)
+    # ---- CARRIAGEWAY WIDTH DIMENSION ----
+    _add_dim(
+        msp,
+        (right+5, top),
+        (right+5, bot),
+        carriage_text,
+        offset=12,
+        vertical=True,
+        text_rotation=90
+    )
+
+    _add_scale_text(msp, box, scale)
+   
+
 # ---------- MAIN ----------
 
 def create_bridge_dxf(params: Dict, out_path: str):
@@ -594,31 +695,38 @@ def create_bridge_dxf(params: Dict, out_path: str):
     mid_x = eff_x + eff_w / 2
     mid_y = eff_y + eff_h / 2
     
-    # View Width and Height (Half of the effective area)
-    view_w = eff_w / 2
-    view_h = eff_h / 2
-    
-    # Box Coordinates: (x, y, w, h)
-    
-    # Left Top: Cross Section
-    box_sec = (eff_x, mid_y, view_w, view_h)
-    
-    # Right Top: Pier Elevation
-    box_pier = (mid_x, mid_y, view_w, view_h)
-    
-    # Left Bottom: Plan View
-    box_plan = (eff_x, eff_y, view_w, view_h)
-    
-    # The Bottom Right quadrant is left empty (or reserved for Title Block)
-    # The Title Block will slightly overlap this quadrant.
-    
-    # --------------------------------------------------------
-    
+   # ----------- NEW ISO STYLE VIEW LAYOUT ------------
+    top_h = eff_h * 0.50
+    bottom_h = eff_h * 0.50
+
+    half_w = eff_w / 2
+    mid_x = eff_x + half_w
+    mid_y = eff_y + bottom_h
+
+    VIEW_LIFT = 20
+
+    # Top-Left  : Section
+    box_sec  = (eff_x+3, mid_y, half_w, top_h)
+
+    # Top-Right : Pier Elevation
+    box_pier = (mid_x, mid_y, half_w, top_h)
+
+    # Bottom-Left : Plan View  ✅ NEW
+    box_plan = (eff_x+3, eff_y + VIEW_LIFT , half_w, bottom_h)
+
+
+
+
     # 3. Render Views
     # NOTE: These functions still use the old scaling logic (which may cause distortion)
     _render_section(msp, box_sec, params)
+    
+
     _render_pier(msp, box_pier, params)
+    
+
     _render_plan(msp, box_plan, params)
+   
   # 4. Title Block (Bottom Right)
     tb_x = A3_W - MARGIN_RIGHT - TITLEBLOCK_W
     tb_y = MARGIN_BOTTOM
