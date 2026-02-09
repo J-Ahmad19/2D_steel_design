@@ -83,7 +83,6 @@ def read_excel(path_str):
 
         # -------- Bridge Dimensions (metres) --------
         rec["length_m"] = _to_float(row.get("length_m"))
-        rec["carriage_width_m"] = _to_float(row.get("carriage_width_m"))
 
         # -------- Depth of Girder (ONLY FIELD IN mm) --------
         depth_val = _to_float(row.get("depth_mm"))
@@ -95,6 +94,11 @@ def read_excel(path_str):
                 depth_val *= 1000.0
 
         rec["depth_mm"] = depth_val
+
+
+        # -------- Carriageway Width (metres) --------
+        rec["carriage_width_m"] = _to_float(row.get("carriage_width_m"))
+        
 
         # -------- Number of girders --------
         ng = row.get("num_girders")

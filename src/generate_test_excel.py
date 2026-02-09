@@ -18,22 +18,22 @@ def generate_validation_excel():
     # 2. Create data that tests your Pydantic validators
     data = [
         # VALID: Standard data
-        ["2025-01-VALID", 20.0, 1500, 9.5, 3, 10.5, 1.8, 0.9, 0.9],
+        ["2025-01-R1", 20.0, 1500, 9.5, 3, 10.5, 1.8, 0.9, 0.9],
         
         # INVALID: Negative Length (Tests 'gt=0' in validators.py)
-        ["ERR-NEG-LEN", -5.0, 1200, 9.5, 3, 10.5, 1.6, 0.8, 0.9],
+        ["2025-02-R1", -5.0, 1200, 9.5, 3, 10.5, 1.6, 0.8, 0.9],
         
         # INVALID: Only 1 Girder (Tests 'ge=2' in validators.py)
-        ["ERR-MIN-GIRD", 15.0, 1000, 9.5, 1, 10.5, 1.4, 0.7, 0.9],
+        ["2025-03-R1", 15.0, 1000, 9.5, 1, 10.5, 1.4, 0.7, 0.9],
         
         # INVALID: Center depth < End depth (Tests custom @field_validator)
-        ["ERR-TAPER", 30.0, 2300, 11.5, 4, 12.5, 0.5, 1.2, 0.9],
+        ["2025-04-R1", 30.0, 2300, 11.5, 4, 12.5, 0.5, 1.2, 0.9],
         
         # INVALID: Missing required value (Tests presence validation)
-        ["ERR-MISSING", 10.0, 800, 9.5, 3, 10.5, None, 0.6, 0.9],
+        ["2025-05-R1", 10.0, 800, 9.5, 3, 10.5, None, 0.6, 0.9],
         
         # VALID: Maximum limit test
-        ["2025-02-VALID", 45.0, 2850, 13.5, 5, 14.5, 2.8, 1.4, 1.2]
+        ["2025-06-R1", 45.0, 2850, 13.5, 5, 14.5, 2.8, 1.4, 1.2]
     ]
 
     # 3. Create DataFrame
